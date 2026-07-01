@@ -1,6 +1,6 @@
 """Tests for the number platform."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.components.number import NumberMode
@@ -61,7 +61,6 @@ async def test_async_set_native_value_success(hass, mock_coordinator, mock_confi
 
     # Mock successful controller call and asyncio.sleep
     with (
-        patch.object(mock_coordinator, "async_request_refresh", new=AsyncMock()) as mock_refresh,
         patch.object(hass, "async_add_executor_job", new=AsyncMock()) as mock_executor,
         patch("asyncio.sleep", new=AsyncMock()),
     ):
@@ -69,7 +68,9 @@ async def test_async_set_native_value_success(hass, mock_coordinator, mock_confi
 
         # Should call the lambda function wrapping the controller command
         assert mock_executor.call_count == 1
-        mock_refresh.assert_called_once()
+        mock_coordinator.async_apply_command_result.assert_called_once_with(
+            ANY, {"dehum_setting": 65}
+        )
 
 
 @pytest.mark.asyncio
@@ -136,7 +137,6 @@ async def test_async_set_native_value_float_conversion(hass, mock_coordinator, m
 
     # Test that 85.7 gets converted to 85 (int)
     with (
-        patch.object(mock_coordinator, "async_request_refresh", new=AsyncMock()) as mock_refresh,
         patch.object(hass, "async_add_executor_job", new=AsyncMock()) as mock_executor,
         patch("asyncio.sleep", new=AsyncMock()),
     ):
@@ -144,4 +144,6 @@ async def test_async_set_native_value_float_conversion(hass, mock_coordinator, m
 
         # Should call the lambda function wrapping the controller command
         assert mock_executor.call_count == 1
-        mock_refresh.assert_called_once()
+        mock_coordinator.async_apply_command_result.assert_called_once_with(
+            ANY, {"dehum_setting": 85}
+        )

@@ -71,6 +71,7 @@ class MitsubishiPowerSavingSelect(MitsubishiEntity, SelectEntity):
             f"set power saving mode to {option}",
             self.coordinator.controller.set_power_saving,
             enabled,
+            optimistic_fields={"is_power_saving": enabled},
         )
 
     @property
@@ -93,7 +94,6 @@ class MitsubishiTemperatureSourceSelect(MitsubishiEntity, SelectEntity):
     ) -> None:
         """Initialize the temperature source select."""
         super().__init__(coordinator, config_entry, "temperature_source_select")
-        self._config_entry = config_entry
 
     @property
     def current_option(self) -> str | None:
@@ -108,7 +108,7 @@ class MitsubishiTemperatureSourceSelect(MitsubishiEntity, SelectEntity):
             _LOGGER.info("Switched to internal temperature sensor")
         else:
             # Switch to remote sensor - check if external entity is configured
-            external_entity_id = self._config_entry.options.get(CONF_EXTERNAL_TEMP_ENTITY)
+            external_entity_id = self.config_entry.options.get(CONF_EXTERNAL_TEMP_ENTITY)
             if not external_entity_id:
                 _LOGGER.warning(
                     "Cannot switch to remote mode: No external temperature entity configured. "
@@ -136,10 +136,7 @@ class MitsubishiTemperatureSourceSelect(MitsubishiEntity, SelectEntity):
 
             # Enable remote mode and send the temperature
             await self.coordinator.set_remote_temp_mode(True)
-            await self.hass.async_add_executor_job(
-                self.coordinator.controller.set_current_temperature,
-                temp,
-            )
+            await self.coordinator.async_set_current_temperature(temp)
             _LOGGER.info(
                 "Switched to remote temperature sensor (%s: %.1f)",
                 external_entity_id,
@@ -152,7 +149,7 @@ class MitsubishiTemperatureSourceSelect(MitsubishiEntity, SelectEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
         attrs: dict[str, Any] = {"source": "Mitsubishi AC"}
-        external_entity_id = self._config_entry.options.get(CONF_EXTERNAL_TEMP_ENTITY)
+        external_entity_id = self.config_entry.options.get(CONF_EXTERNAL_TEMP_ENTITY)
         if external_entity_id:
             attrs["external_temperature_entity"] = external_entity_id
             # Get current value from external entity

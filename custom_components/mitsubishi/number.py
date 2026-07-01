@@ -65,6 +65,7 @@ class MitsubishiDehumidifierNumber(MitsubishiEntity, NumberEntity):
             f"set dehumidifier level to {value}%",
             self.coordinator.controller.set_dehumidifier,
             int(value),
+            optimistic_fields={"dehum_setting": int(value)},
         )
 
     @property

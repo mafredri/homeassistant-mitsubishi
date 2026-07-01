@@ -138,7 +138,10 @@ class TestConfigFlow:
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
 
-        with patch("custom_components.mitsubishi.config_flow.MitsubishiAPI") as mock_api_class:
+        with (
+            patch("custom_components.mitsubishi.config_flow.MitsubishiAPI") as mock_api_class,
+            patch("custom_components.mitsubishi.async_setup_entry", return_value=True),
+        ):
             mock_api = MagicMock()
             mock_api_class.return_value = mock_api
 
@@ -164,7 +167,10 @@ class TestConfigFlow:
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
 
-        with patch("custom_components.mitsubishi.config_flow.MitsubishiAPI") as mock_api_class:
+        with (
+            patch("custom_components.mitsubishi.config_flow.MitsubishiAPI") as mock_api_class,
+            patch("custom_components.mitsubishi.async_setup_entry", return_value=True),
+        ):
             mock_api_class.return_value = mock_api
 
             with patch(
@@ -196,7 +202,10 @@ class TestConfigFlow:
     async def test_form_already_configured(self, hass: HomeAssistant) -> None:
         """Test we handle already configured."""
         # Mock the entry creation first, but don't add it yet
-        with patch("custom_components.mitsubishi.config_flow.MitsubishiAPI") as mock_api_class:
+        with (
+            patch("custom_components.mitsubishi.config_flow.MitsubishiAPI") as mock_api_class,
+            patch("custom_components.mitsubishi.async_setup_entry", return_value=True),
+        ):
             mock_api = MagicMock()
             mock_api_class.return_value = mock_api
 
@@ -239,7 +248,10 @@ class TestConfigFlow:
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
 
-        with patch("custom_components.mitsubishi.config_flow.MitsubishiAPI") as mock_api_class:
+        with (
+            patch("custom_components.mitsubishi.config_flow.MitsubishiAPI") as mock_api_class,
+            patch("custom_components.mitsubishi.async_setup_entry", return_value=True),
+        ):
             mock_api_class.return_value = mock_api
 
             with patch(
