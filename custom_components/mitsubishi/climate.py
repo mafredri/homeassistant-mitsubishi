@@ -133,7 +133,6 @@ class MitsubishiClimate(MitsubishiEntity, ClimateEntity):
     ) -> None:
         """Initialize the climate entity."""
         super().__init__(coordinator, config_entry, "climate")
-        self._config_entry = config_entry
 
     @property
     def current_temperature(self) -> float | None:
@@ -159,6 +158,7 @@ class MitsubishiClimate(MitsubishiEntity, ClimateEntity):
             f"set temperature to {temperature}°C",
             self.coordinator.controller.set_temperature,
             temperature,
+            optimistic_fields={"temperature": temperature},
         )
 
     @property
@@ -176,29 +176,46 @@ class MitsubishiClimate(MitsubishiEntity, ClimateEntity):
 
     async def async_turn_on(self) -> None:
         await self._execute_command_with_refresh(
-            "turn on device", self.coordinator.controller.set_power, True
+            "turn on device",
+            self.coordinator.controller.set_power,
+            True,
+            optimistic_fields={"power_on_off": PowerOnOff.ON},
         )
 
     async def async_turn_off(self) -> None:
         await self._execute_command_with_refresh(
-            "turn off device", self.coordinator.controller.set_power, False
+            "turn off device",
+            self.coordinator.controller.set_power,
+            False,
+            optimistic_fields={"power_on_off": PowerOnOff.OFF},
         )
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target hvac mode."""
         if hvac_mode == HVACMode.OFF:
             await self._execute_command_with_refresh(
-                f"set HVAC mode to {hvac_mode}", self.coordinator.controller.set_power, False
+                f"set HVAC mode to {hvac_mode}",
+                self.coordinator.controller.set_power,
+                False,
+                optimistic_fields={"power_on_off": PowerOnOff.OFF},
             )
         else:
-            changeset = self.coordinator.controller.changeset()
-            changeset.set_power(PowerOnOff.ON)
-            changeset.set_mode(MODE_HA_TO_MITSUBISHI[hvac_mode])
+
+            def command_factory():
+                changeset = self.coordinator.controller.changeset()
+                changeset.set_power(PowerOnOff.ON)
+                changeset.set_mode(MODE_HA_TO_MITSUBISHI[hvac_mode])
+                return self.coordinator.controller.apply_changeset, (changeset,), {}
+
             # Set the mode
             await self._execute_command_with_refresh(
                 f"set HVAC mode to {hvac_mode}",
-                self.coordinator.controller.apply_changeset,
-                changeset,
+                None,
+                command_factory=command_factory,
+                optimistic_fields={
+                    "power_on_off": PowerOnOff.ON,
+                    "drive_mode": MODE_HA_TO_MITSUBISHI[hvac_mode],
+                },
             )
 
     @property
@@ -242,6 +259,7 @@ class MitsubishiClimate(MitsubishiEntity, ClimateEntity):
             f"set fan mode to {fan_mode}",
             self.coordinator.controller.set_fan_speed,
             FAN_SPEED_HA_TO_MITSUBISHI[fan_mode],
+            optimistic_fields={"wind_speed": FAN_SPEED_HA_TO_MITSUBISHI[fan_mode]},
         )
 
     @property
@@ -256,6 +274,7 @@ class MitsubishiClimate(MitsubishiEntity, ClimateEntity):
             f"set swing mode to {swing_mode}",
             self.coordinator.controller.set_vertical_vane,
             VSWING_HA_TO_MITSUBISHI[swing_mode],
+            optimistic_fields={"vertical_wind_direction": VSWING_HA_TO_MITSUBISHI[swing_mode]},
         )
 
     @property
@@ -270,6 +289,9 @@ class MitsubishiClimate(MitsubishiEntity, ClimateEntity):
             f"set horizontal swing mode to {swing_horizontal_mode}",
             self.coordinator.controller.set_horizontal_vane,
             HSWING_HA_TO_MITSUBISHI[swing_horizontal_mode],
+            optimistic_fields={
+                "horizontal_wind_direction": HSWING_HA_TO_MITSUBISHI[swing_horizontal_mode]
+            },
         )
 
     @property

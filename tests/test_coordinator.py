@@ -1,8 +1,10 @@
 """Tests for the MitsubishiDataUpdateCoordinator."""
 
+import copy
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
+import pymitsubishi
 import pytest
 from homeassistant.const import CONF_HOST, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers.update_coordinator import UpdateFailed
@@ -15,6 +17,7 @@ from custom_components.mitsubishi.const import (
     DOMAIN,
 )
 from custom_components.mitsubishi.coordinator import MitsubishiDataUpdateCoordinator
+from tests import TEST_SYSTEM_DATA
 
 
 @pytest.mark.asyncio
@@ -93,6 +96,95 @@ async def test_async_update_data_fetch_status_fails(
 
 
 @pytest.mark.asyncio
+async def test_pending_general_state_overlays_stale_fetch(
+    hass, mock_mitsubishi_controller, mock_config_entry
+):
+    """Test stale device data does not overwrite pending command state."""
+    coordinator = MitsubishiDataUpdateCoordinator(
+        hass, mock_mitsubishi_controller, mock_config_entry
+    )
+    stale_state = copy.deepcopy(TEST_SYSTEM_DATA)
+    stale_state.general.temperature = 20.0
+
+    coordinator._set_pending_general({"temperature": 21.5})
+    result = coordinator._apply_pending_general(stale_state)
+
+    assert result.general.temperature == 21.5
+    assert coordinator._pending_general == {"temperature": 21.5}
+
+
+@pytest.mark.asyncio
+async def test_pending_general_state_timeout_uses_scan_interval(
+    hass, mock_mitsubishi_controller, mock_config_entry
+):
+    """Test pending command state expires after one configured polling cycle."""
+    coordinator = MitsubishiDataUpdateCoordinator(
+        hass, mock_mitsubishi_controller, mock_config_entry, scan_interval=60
+    )
+
+    now = hass.loop.time()
+    coordinator._set_pending_general({"temperature": 21.5})
+
+    assert coordinator._pending_expires_at == pytest.approx(now + 70)
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_preserves_pending_state_on_controller(
+    hass, mock_mitsubishi_controller, mock_config_entry
+):
+    """Test stale refreshes do not leave controller cache with stale command state."""
+    coordinator = MitsubishiDataUpdateCoordinator(
+        hass, mock_mitsubishi_controller, mock_config_entry
+    )
+    stale_state = copy.deepcopy(TEST_SYSTEM_DATA)
+    stale_state.general.temperature = 20.0
+    mock_mitsubishi_controller.fetch_status.return_value = stale_state
+
+    coordinator._set_pending_general({"temperature": 21.5})
+
+    result = await coordinator._async_update_data()
+
+    assert result.general.temperature == 21.5
+    assert mock_mitsubishi_controller.state.general.temperature == 21.5
+
+
+@pytest.mark.asyncio
+async def test_pending_general_state_clears_after_confirmation(
+    hass, mock_mitsubishi_controller, mock_config_entry
+):
+    """Test confirmed command state clears the pending overlay."""
+    coordinator = MitsubishiDataUpdateCoordinator(
+        hass, mock_mitsubishi_controller, mock_config_entry
+    )
+    confirmed_state = copy.deepcopy(TEST_SYSTEM_DATA)
+    confirmed_state.general.wind_speed = pymitsubishi.WindSpeed.S3
+
+    coordinator._set_pending_general({"wind_speed": pymitsubishi.WindSpeed.S3})
+    result = coordinator._apply_pending_general(confirmed_state)
+
+    assert result.general.wind_speed == pymitsubishi.WindSpeed.S3
+    assert coordinator._pending_general == {}
+    assert coordinator._pending_expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_pending_general_state_expires(hass, mock_mitsubishi_controller, mock_config_entry):
+    """Test unconfirmed command state rolls back after timeout."""
+    coordinator = MitsubishiDataUpdateCoordinator(
+        hass, mock_mitsubishi_controller, mock_config_entry
+    )
+    stale_state = copy.deepcopy(TEST_SYSTEM_DATA)
+    stale_state.general.power_on_off = pymitsubishi.PowerOnOff.OFF
+
+    coordinator._pending_general = {"power_on_off": pymitsubishi.PowerOnOff.ON}
+    coordinator._pending_expires_at = hass.loop.time() - 1
+    result = coordinator._apply_pending_general(stale_state)
+
+    assert result.general.power_on_off == pymitsubishi.PowerOnOff.OFF
+    assert coordinator._pending_general == {}
+
+
+@pytest.mark.asyncio
 async def test_coordinator_remote_temp_mode_property(
     hass, mock_mitsubishi_controller, mock_config_entry
 ):
@@ -118,20 +210,29 @@ async def test_coordinator_experimental_features_disabled(
 
 @pytest.mark.asyncio
 async def test_coordinator_set_remote_temp_mode(
-    hass, mock_mitsubishi_controller, mock_config_entry
+    hass, mock_mitsubishi_controller, mock_config_entry, tracking_async_lock
 ):
     """Test set_remote_temp_mode method."""
     mock_config_entry.add_to_hass(hass)
     coordinator = MitsubishiDataUpdateCoordinator(
         hass, mock_mitsubishi_controller, mock_config_entry
     )
+    command_lock = tracking_async_lock
+    coordinator._command_lock = command_lock
+
+    async def async_add_executor_job(func, *args):
+        assert command_lock.locked is True
+        return func(*args)
 
     # Enable remote mode (no hardware call when enabling)
     await coordinator.set_remote_temp_mode(True)
     assert coordinator.remote_temp_mode is True
 
     # Disable remote mode (should call set_current_temperature(None))
-    await coordinator.set_remote_temp_mode(False)
+    with patch.object(
+        hass, "async_add_executor_job", AsyncMock(side_effect=async_add_executor_job)
+    ):
+        await coordinator.set_remote_temp_mode(False)
     assert coordinator.remote_temp_mode is False
     mock_mitsubishi_controller.set_current_temperature.assert_called_with(None)
 
@@ -360,7 +461,10 @@ async def test_send_remote_temperature_invalid_value(
 
 @pytest.mark.asyncio
 async def test_send_remote_temperature_success(
-    hass, mock_mitsubishi_controller, mock_config_entry_experimental
+    hass,
+    mock_mitsubishi_controller,
+    mock_config_entry_experimental,
+    tracking_async_lock,
 ):
     """Test _send_remote_temperature with valid temperature."""
     mock_config_entry_experimental.add_to_hass(hass)
@@ -372,8 +476,18 @@ async def test_send_remote_temperature_success(
         hass, mock_mitsubishi_controller, mock_config_entry_experimental
     )
     coordinator._remote_temp_mode = True
+    command_lock = tracking_async_lock
+    coordinator._command_lock = command_lock
 
-    with patch.object(hass, "async_add_executor_job", AsyncMock()) as mock_executor:
+    async def async_add_executor_job(func, *args):
+        assert command_lock.locked is True
+        return func(*args)
+
+    with patch.object(
+        hass,
+        "async_add_executor_job",
+        AsyncMock(side_effect=async_add_executor_job),
+    ) as mock_executor:
         await coordinator._send_remote_temperature()
 
         mock_executor.assert_called_once()

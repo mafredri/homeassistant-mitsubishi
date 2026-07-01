@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from unittest.mock import AsyncMock, MagicMock
 
@@ -20,6 +21,19 @@ from . import (
 
 # Import Home Assistant test utilities
 pytest_plugins = "pytest_homeassistant_custom_component"
+
+
+class TrackingAsyncLock:
+    """Async lock test double that exposes whether the current block is locked."""
+
+    def __init__(self):
+        self.locked = False
+
+    async def __aenter__(self):
+        self.locked = True
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.locked = False
 
 
 @pytest.fixture(autouse=True)
@@ -50,6 +64,12 @@ def mock_api_close():
 
 
 @pytest.fixture
+def tracking_async_lock():
+    """Return an async lock test double."""
+    return TrackingAsyncLock()
+
+
+@pytest.fixture
 def mock_coordinator():
     """Create a mock coordinator."""
     coordinator = MagicMock()
@@ -60,12 +80,20 @@ def mock_coordinator():
     coordinator.async_config_entry_first_refresh = AsyncMock()
     coordinator.async_request_refresh = AsyncMock()
     coordinator.async_update_listeners = MagicMock()
+    coordinator.command_lock = asyncio.Lock()
+    coordinator.async_apply_command_result = MagicMock()
+    coordinator.async_command_failed = AsyncMock()
 
     # Add controller with API mock
     coordinator.controller = MagicMock()
     coordinator.controller.wait_time_after_command = 0.1
     coordinator.controller.api = MagicMock()
     coordinator.controller.api.close = MagicMock()
+
+    async def async_set_current_temperature(temperature):
+        coordinator.controller.set_current_temperature(temperature)
+
+    coordinator.async_set_current_temperature = AsyncMock(side_effect=async_set_current_temperature)
 
     return coordinator
 
@@ -133,10 +161,10 @@ def mock_async_methods():
     @contextmanager
     def _patch_async_methods(hass, coordinator):
         with (
-            patch.object(coordinator, "async_request_refresh", new=AsyncMock()) as mock_refresh,
             patch.object(hass, "async_add_executor_job", new=AsyncMock()) as mock_executor,
         ):
-            yield mock_executor, mock_refresh
+            coordinator.async_apply_command_result.reset_mock()
+            yield mock_executor, coordinator.async_apply_command_result
 
     return _patch_async_methods
 

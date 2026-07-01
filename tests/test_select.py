@@ -1,6 +1,6 @@
 """Tests for the select platform."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -62,7 +62,6 @@ async def test_power_saving_select_async_select_option_enabled(
     select.hass = hass  # Set hass attribute
 
     with (
-        patch.object(mock_coordinator, "async_request_refresh", new=AsyncMock()) as mock_refresh,
         patch.object(hass, "async_add_executor_job", new=AsyncMock()) as mock_executor,
         patch("asyncio.sleep", new=AsyncMock()),
     ):
@@ -70,7 +69,9 @@ async def test_power_saving_select_async_select_option_enabled(
 
         # Should call the lambda function wrapping the controller command
         assert mock_executor.call_count == 1
-        mock_refresh.assert_called_once()
+        mock_coordinator.async_apply_command_result.assert_called_once_with(
+            ANY, {"is_power_saving": True}
+        )
 
 
 @pytest.mark.asyncio
@@ -82,7 +83,6 @@ async def test_power_saving_select_async_select_option_disabled(
     select.hass = hass  # Set hass attribute
 
     with (
-        patch.object(mock_coordinator, "async_request_refresh", new=AsyncMock()) as mock_refresh,
         patch.object(hass, "async_add_executor_job", new=AsyncMock()) as mock_executor,
         patch("asyncio.sleep", new=AsyncMock()),
     ):
@@ -90,7 +90,9 @@ async def test_power_saving_select_async_select_option_disabled(
 
         # Should call the lambda function wrapping the controller command
         assert mock_executor.call_count == 1
-        mock_refresh.assert_called_once()
+        mock_coordinator.async_apply_command_result.assert_called_once_with(
+            ANY, {"is_power_saving": False}
+        )
 
 
 @pytest.mark.asyncio
@@ -210,6 +212,25 @@ async def test_temperature_source_select_switch_to_remote_no_entity(
 
     # Should not change mode when no entity configured
     mock_coordinator.set_remote_temp_mode.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_temperature_source_select_switch_to_remote_sends_temperature(
+    hass, mock_coordinator, mock_config_entry_experimental
+):
+    """Test switching to remote sends current external temperature."""
+    mock_coordinator.set_remote_temp_mode = AsyncMock()
+    mock_coordinator.async_set_current_temperature = AsyncMock()
+    hass.states.async_set("sensor.room_temp", "21.5")
+    select = MitsubishiTemperatureSourceSelect(mock_coordinator, mock_config_entry_experimental)
+    select.hass = hass
+    select.async_write_ha_state = MagicMock()
+
+    await select.async_select_option("Remote")
+
+    mock_coordinator.set_remote_temp_mode.assert_called_once_with(True)
+    mock_coordinator.async_set_current_temperature.assert_called_once_with(21.5)
+    select.async_write_ha_state.assert_called_once()
 
 
 @pytest.mark.asyncio

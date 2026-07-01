@@ -142,9 +142,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.info(
                     "[%s] Switching AC to internal temperature sensor during unload", entry.title
                 )
-                await hass.async_add_executor_job(
-                    coordinator.controller.set_current_temperature, None
-                )
+                await coordinator.async_set_current_temperature(None)
             except Exception:
                 _LOGGER.warning(
                     "[%s] Failed to switch AC to internal sensor during unload, "
