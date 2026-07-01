@@ -24,6 +24,7 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import MitsubishiDataUpdateCoordinator
+from .device_info import build_device_info, migrate_device_registry_entry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,16 +100,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Register device in device registry with comprehensive info
         device_registry = dr.async_get(hass)
+        migrate_device_registry_entry(
+            device_registry,
+            config_entry_id=entry.entry_id,
+            host=host,
+            device_mac=device_mac,
+            device_serial=device_serial,
+            device_model=device_model,
+            sw_version=sw_version_str,
+        )
         device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
-            identifiers={(DOMAIN, device_mac or host)},
-            manufacturer="Mitsubishi Electric",
-            model=device_model,
-            name=f"Mitsubishi AC {device_mac[-8:]}" if device_mac else f"Mitsubishi AC ({host})",
-            sw_version=sw_version_str,
-            serial_number=device_serial,
-            suggested_area="Living Room",
-            configuration_url=f"http://{host}",
+            **build_device_info(
+                host=host,
+                device_mac=device_mac,
+                device_serial=device_serial,
+                device_model=device_model,
+                sw_version=sw_version_str,
+                suggested_area="Living Room",
+            ),
         )
 
         # Store coordinator in hass data

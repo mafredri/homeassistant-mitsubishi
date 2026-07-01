@@ -6,11 +6,10 @@ import asyncio
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
 from .coordinator import MitsubishiDataUpdateCoordinator
+from .device_info import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,23 +34,18 @@ class MitsubishiEntity(CoordinatorEntity[MitsubishiDataUpdateCoordinator]):
             device_mac = coordinator.data.mac
             device_serial = coordinator.data.serial
         else:
-            device_mac = config_entry.data["host"]
+            device_mac = None
             device_serial = None
 
         # Set device info
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, device_mac)},
-            manufacturer="Mitsubishi Electric",
-            name=f"Mitsubishi AC {device_mac[-8:]}"
-            if device_mac
-            else f"Mitsubishi AC ({config_entry.data['host']})",
-            hw_version=device_mac,
-            serial_number=device_serial,
-            configuration_url=f"http://{config_entry.data['host']}",
+        self._attr_device_info = build_device_info(
+            host=config_entry.data["host"],
+            device_mac=device_mac,
+            device_serial=device_serial,
         )
 
         # Set unique ID
-        self._attr_unique_id = f"{device_mac}_{key}"
+        self._attr_unique_id = f"{device_mac or device_serial or config_entry.data['host']}_{key}"
 
     @property
     def available(self) -> bool:

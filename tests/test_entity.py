@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers import device_registry as dr
 
 from custom_components.mitsubishi.const import DOMAIN
 from custom_components.mitsubishi.entity import MitsubishiEntity
@@ -30,10 +31,11 @@ async def test_mitsubishi_entity_initialization(hass):
     assert entity._key == "test_key"
 
     # Check device info attributes
-    assert entity.device_info["identifiers"] == {(DOMAIN, "00:11:22:33:44:55")}
+    assert entity.device_info["identifiers"] == {(DOMAIN, "TEST123456")}
+    assert entity.device_info["connections"] == {(dr.CONNECTION_NETWORK_MAC, "00:11:22:33:44:55")}
     assert entity.device_info["manufacturer"] == "Mitsubishi Electric"
     assert entity.device_info["name"] == "Mitsubishi AC 33:44:55"
-    assert entity.device_info["hw_version"] == "00:11:22:33:44:55"
+    assert "hw_version" not in entity.device_info
     assert entity.device_info["serial_number"] == "TEST123456"
 
     # Check unique ID
@@ -88,9 +90,10 @@ async def test_mitsubishi_entity_initialization_with_none_data(hass):
 
     # Should have device info based on host fallback
     assert entity.device_info["identifiers"] == {(DOMAIN, "192.168.1.100")}
+    assert "connections" not in entity.device_info
     assert entity.device_info["manufacturer"] == "Mitsubishi Electric"
-    assert entity.device_info["name"] == "Mitsubishi AC 68.1.100"  # Last 8 chars of IP
-    assert entity.device_info["hw_version"] == "192.168.1.100"
+    assert entity.device_info["name"] == "Mitsubishi AC (192.168.1.100)"
+    assert "hw_version" not in entity.device_info
     assert entity.device_info["serial_number"] is None
 
     # Check unique ID

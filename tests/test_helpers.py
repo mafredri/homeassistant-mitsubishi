@@ -4,8 +4,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import requests
+from homeassistant.helpers import device_registry as dr
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.mitsubishi import async_setup_entry, async_unload_entry
+from custom_components.mitsubishi.const import DOMAIN
+from custom_components.mitsubishi.device_info import migrate_device_registry_entry
+
+
+def mock_empty_device_registry():
+    """Return a device registry mock with no existing devices."""
+    mock_registry = MagicMock()
+    mock_registry.async_get_device.return_value = None
+    mock_registry.async_get_or_create = MagicMock(return_value=MagicMock())
+    return mock_registry
 
 
 @pytest.mark.asyncio
@@ -27,8 +39,7 @@ async def test_async_setup_entry(hass, mock_config_entry, mock_coordinator):
         mock_coordinator.get_unit_info = AsyncMock(return_value={})
 
         # Mock device registry
-        mock_registry = MagicMock()
-        mock_registry.async_get_or_create = MagicMock(return_value=MagicMock())
+        mock_registry = mock_empty_device_registry()
         mock_device_registry.return_value = mock_registry
 
         assert await async_setup_entry(hass, mock_config_entry) is True
@@ -130,7 +141,7 @@ async def test_async_setup_entry_with_comprehensive_unit_info(
         mock_controller_class.return_value = mock_controller
 
         # Mock device registry
-        mock_registry = MagicMock()
+        mock_registry = mock_empty_device_registry()
         mock_device_registry.return_value = mock_registry
 
         result = await async_setup_entry(hass, mock_config_entry)
@@ -146,6 +157,9 @@ async def test_async_setup_entry_with_comprehensive_unit_info(
         assert "App: 33.00" in sw_version
         assert "Rel: 00.06" in sw_version
         assert "CP: 01.08" in sw_version
+        assert call_kwargs["identifiers"] == {(DOMAIN, "1234567890")}
+        assert call_kwargs["connections"] == {(dr.CONNECTION_NETWORK_MAC, "00:11:22:33:44:55")}
+        assert "hw_version" not in call_kwargs
 
 
 @pytest.mark.asyncio
@@ -166,7 +180,7 @@ async def test_async_setup_entry_without_unit_info(hass, mock_config_entry, mock
         mock_controller_class.return_value = mock_controller
 
         # Mock device registry
-        mock_registry = MagicMock()
+        mock_registry = mock_empty_device_registry()
         mock_device_registry.return_value = mock_registry
 
         mock_coordinator.get_unit_info = MagicMock(
@@ -179,6 +193,84 @@ async def test_async_setup_entry_without_unit_info(hass, mock_config_entry, mock
 
         # Verify device registry was called with comprehensive info
         mock_registry.async_get_or_create.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_rekeys_old_mac_identifier(
+    hass, mock_config_entry, mock_coordinator
+):
+    """Test setup rekeys old MAC identifier devices to serial plus MAC connection."""
+    mock_config_entry.add_to_hass(hass)
+    device_registry = dr.async_get(hass)
+    old_device = device_registry.async_get_or_create(
+        config_entry_id=mock_config_entry.entry_id,
+        identifiers={(DOMAIN, "00:11:22:33:44:55")},
+        hw_version="00:11:22:33:44:55",
+    )
+
+    with (
+        patch("custom_components.mitsubishi.MitsubishiController") as mock_controller_class,
+        patch(
+            "custom_components.mitsubishi.MitsubishiDataUpdateCoordinator",
+            return_value=mock_coordinator,
+        ),
+        patch.object(hass.config_entries, "async_forward_entry_setups", return_value=None),
+    ):
+        mock_controller = MagicMock()
+        mock_controller.fetch_status = MagicMock(return_value=True)
+        mock_controller_class.return_value = mock_controller
+
+        assert await async_setup_entry(hass, mock_config_entry) is True
+
+    migrated_device = device_registry.async_get(old_device.id)
+    assert migrated_device is not None
+    assert migrated_device.identifiers == {(DOMAIN, "1234567890")}
+    assert migrated_device.connections == {(dr.CONNECTION_NETWORK_MAC, "00:11:22:33:44:55")}
+    assert migrated_device.hw_version is None
+    assert migrated_device.serial_number == "1234567890"
+    assert mock_config_entry.entry_id in migrated_device.config_entries
+
+
+def test_migrate_device_registry_entry_moves_config_to_existing_mac_device(hass, mock_config_entry):
+    """Test migration joins an existing network device with the same MAC."""
+    mock_config_entry.add_to_hass(hass)
+    device_registry = dr.async_get(hass)
+    old_device = device_registry.async_get_or_create(
+        config_entry_id=mock_config_entry.entry_id,
+        identifiers={(DOMAIN, "00:11:22:33:44:55")},
+        hw_version="00:11:22:33:44:55",
+    )
+    shared_config_entry = MockConfigEntry(
+        domain="unifi",
+        title="UniFi Network",
+        entry_id="unifi_entry_id",
+    )
+    shared_config_entry.add_to_hass(hass)
+    shared_device = device_registry.async_get_or_create(
+        config_entry_id=shared_config_entry.entry_id,
+        connections={(dr.CONNECTION_NETWORK_MAC, "00:11:22:33:44:55")},
+        manufacturer="Ubiquiti",
+    )
+
+    migrate_device_registry_entry(
+        device_registry,
+        config_entry_id=mock_config_entry.entry_id,
+        host="192.168.1.100",
+        device_mac="00:11:22:33:44:55",
+        device_serial="1234567890",
+        device_model="MAC-577IF-E",
+        sw_version="App: 33.00",
+    )
+
+    migrated_shared_device = device_registry.async_get(shared_device.id)
+    migrated_old_device = device_registry.async_get(old_device.id)
+    assert migrated_shared_device is not None
+    assert mock_config_entry.entry_id in migrated_shared_device.config_entries
+    assert migrated_old_device is None
+    assert (DOMAIN, "1234567890") in migrated_shared_device.identifiers
+    assert (dr.CONNECTION_NETWORK_MAC, "00:11:22:33:44:55") in migrated_shared_device.connections
+    assert migrated_shared_device.hw_version is None
+    assert migrated_shared_device.serial_number == "1234567890"
 
 
 @pytest.mark.asyncio
